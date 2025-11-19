@@ -1,0 +1,366 @@
+{
+  "name": "AI Voice Agent - Complete Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inbound-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d377b48b-5a9f-4624-bc32-b3360c9eaaf4",
+      "name": "Webhook - Inbound Call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1552,
+        -64
+      ],
+      "webhookId": "inbound-call-trigger"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse incoming Twilio call data\nconst callSid = $input.item.json.CallSid || 'TEST-CALL-' + Date.now();\nconst fromNumber = $input.item.json.From || '+1234567890';\nconst toNumber = $input.item.json.To || '+1987654321';\nconst callStatus = $input.item.json.CallStatus || 'in-progress';\n\nreturn {\n  json: {\n    callSid: callSid,\n    customerPhone: fromNumber,\n    businessPhone: toNumber,\n    callStatus: callStatus,\n    timestamp: new Date().toISOString(),\n    conversationHistory: [],\n    stage: 'greeting',\n    customerName: '',\n    customerEmail: '',\n    appointmentDate: '',\n    appointmentTime: '',\n    appointmentBooked: false\n  }\n};"
+      },
+      "id": "dc611424-1aba-4b4f-8226-ba06086cbdae",
+      "name": "Parse Call Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -1344,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n    <Gather input=\"speech\" \n            timeout=\"5\" \n            speechTimeout=\"auto\" \n            action=\"{{ $('Webhook - Inbound Call').item.json.webhookUrl }}/process-speech\">\n        <Say voice=\"Polly.Joanna\">\n            Hello! Thank you for calling our business. I'm your AI assistant, and I'm here to help you 24/7.\n            You can book an appointment, get information about our services, or ask me any questions.\n            How can I help you today?\n        </Say>\n    </Gather>\n    <Say>I didn't catch that. Let me try again.</Say>\n    <Redirect>{{ $('Webhook - Inbound Call').item.json.webhookUrl }}</Redirect>\n</Response>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "f4998558-07bd-40ba-a4bc-10a34ce3da09",
+      "name": "Respond with Greeting",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-speech",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cca4f6e1-df0b-4388-91f4-94dc2009a625",
+      "name": "Webhook - Process Speech",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1536,
+        320
+      ],
+      "webhookId": "process-speech-trigger"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract speech from Twilio\nconst speechResult = $input.item.json.SpeechResult || '';\nconst confidence = $input.item.json.Confidence || 0;\nconst callSid = $input.item.json.CallSid;\n\n// Get previous conversation data from workflow static data if exists\nconst workflowData = $workflow.staticData || {};\nconst callData = workflowData[callSid] || {\n  conversationHistory: [],\n  customerName: '',\n  customerEmail: '',\n  appointmentDate: '',\n  appointmentTime: '',\n  stage: 'initial'\n};\n\n// Add customer speech to history\ncallData.conversationHistory.push({\n  role: 'user',\n  content: speechResult,\n  timestamp: new Date().toISOString()\n});\n\nreturn {\n  json: {\n    callSid: callSid,\n    customerSpeech: speechResult,\n    confidence: confidence,\n    timestamp: new Date().toISOString(),\n    ...callData\n  }\n};"
+      },
+      "id": "288a5265-8556-4b13-803f-cae8fcc1fdfd",
+      "name": "Extract Speech",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -1328,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a professional AI phone assistant for a business. Your role is to:\n\n1. Help customers book appointments\n2. Collect information: full name, email, preferred date and time\n3. Confirm all details before finalizing\n4. Be warm, concise, and natural - remember this is a phone conversation\n5. Ask ONE question at a time\n6. Keep responses under 40 words\n\nCurrent conversation stage: {{ $json.stage }}\n\nInformation collected so far:\n- Name: {{ $json.customerName || 'Not collected' }}\n- Email: {{ $json.customerEmail || 'Not collected' }}\n- Date: {{ $json.appointmentDate || 'Not collected' }}\n- Time: {{ $json.appointmentTime || 'Not collected' }}\n\nConversation history:\n{{ $json.conversationHistory.map(m => m.role + ': ' + m.content).join('\\n') }}\n\nBased on what information is missing, ask for the next piece naturally. When you have all information, summarize and ask for confirmation.",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.customerSpeech }}"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 150,
+          "temperature": 0.7
+        }
+      },
+      "id": "95783297-fe99-4791-81aa-f073247d42ba",
+      "name": "OpenAI - Process Intent",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        320
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "il6NDtOe3UoDhlrJ",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse AI response and extract information\nconst aiResponse = $input.item.json.message?.content || $input.item.json.text || '';\nconst previousData = $node['Extract Speech'].json;\nconst customerSpeech = previousData.customerSpeech.toLowerCase();\n\n// Extract information from customer speech\nlet updatedData = { ...previousData };\n\n// Extract name (if asked for name and customer provided it)\nif (previousData.stage === 'collecting_name' || customerSpeech.includes('my name is') || customerSpeech.includes('i am') || customerSpeech.includes(\"i'm\")) {\n  const nameMatch = customerSpeech.match(/(?:my name is|i am|i'm)\\s+([a-z]+(?:\\s+[a-z]+)?)/i);\n  if (nameMatch && !previousData.customerName) {\n    updatedData.customerName = nameMatch[1].split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');\n    updatedData.stage = 'collecting_email';\n  }\n}\n\n// Extract email\nconst emailMatch = customerSpeech.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}/i);\nif (emailMatch && !previousData.customerEmail) {\n  updatedData.customerEmail = emailMatch[0];\n  updatedData.stage = 'collecting_date';\n}\n\n// Extract date (simple patterns)\nif (!previousData.appointmentDate) {\n  const datePatterns = [\n    /\\b(tomorrow)\\b/i,\n    /\\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b/i,\n    /\\b(\\d{1,2})\\s*(?:st|nd|rd|th)?\\s+(january|february|march|april|may|june|july|august|september|october|november|december)\\b/i,\n    /\\b(january|february|march|april|may|june|july|august|september|october|november|december)\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b/i\n  ];\n  \n  for (const pattern of datePatterns) {\n    const match = customerSpeech.match(pattern);\n    if (match) {\n      updatedData.appointmentDate = match[0];\n      updatedData.stage = 'collecting_time';\n      break;\n    }\n  }\n}\n\n// Extract time\nif (!previousData.appointmentTime) {\n  const timeMatch = customerSpeech.match(/\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.)\\b/i);\n  if (timeMatch) {\n    updatedData.appointmentTime = timeMatch[0];\n    updatedData.stage = 'confirmation';\n  }\n}\n\n// Determine if we need more info\nconst hasAllInfo = updatedData.customerName && \n                   updatedData.customerEmail && \n                   updatedData.appointmentDate && \n                   updatedData.appointmentTime;\n\n// Check if customer confirmed\nconst confirmedWords = ['yes', 'correct', 'right', 'confirm', 'perfect', 'sounds good'];\nconst isConfirmed = confirmedWords.some(word => customerSpeech.includes(word)) && hasAllInfo;\n\n// Update conversation history\nupdatedData.conversationHistory.push({\n  role: 'assistant',\n  content: aiResponse,\n  timestamp: new Date().toISOString()\n});\n\n// Save to workflow static data for persistence\nconst workflowData = $workflow.staticData || {};\nworkflowData[updatedData.callSid] = updatedData;\n\nreturn {\n  json: {\n    ...updatedData,\n    aiResponse: aiResponse,\n    hasAllInfo: hasAllInfo,\n    isConfirmed: isConfirmed,\n    needsMoreInfo: !hasAllInfo || !isConfirmed\n  }\n};"
+      },
+      "id": "2a42d396-9e17-4442-abd0-14eb605fa677",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isConfirmed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f3a3ae32-9df9-4f29-ab89-328faa412c77",
+      "name": "If Ready to Book",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate all appointment data\nconst data = $json;\n\n// Email validation\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst hasValidEmail = emailRegex.test(data.customerEmail);\n\n// Phone validation (at least 10 digits)\nconst phoneRegex = /\\d{10,}/;\nconst hasValidPhone = phoneRegex.test(data.customerPhone);\n\n// Check all required fields\nconst hasName = data.customerName && data.customerName.length > 1;\nconst hasDate = data.appointmentDate && data.appointmentDate.length > 0;\nconst hasTime = data.appointmentTime && data.appointmentTime.length > 0;\n\nconst isValid = hasName && hasValidEmail && hasValidPhone && hasDate && hasTime;\n\n// Generate appointment ID\nconst appointmentId = 'APT-' + Date.now().toString().slice(-8);\n\nreturn {\n  json: {\n    ...data,\n    appointmentId: appointmentId,\n    isValid: isValid,\n    validationErrors: {\n      name: !hasName,\n      email: !hasValidEmail,\n      phone: !hasValidPhone,\n      date: !hasDate,\n      time: !hasTime\n    }\n  }\n};"
+      },
+      "id": "ff0f4460-2789-4b86-9b97-af80b9e00252",
+      "name": "Validate Appointment Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Generate confirmation message\nconst data = $json;\n\nconst confirmationMessage = `Perfect! I've successfully booked your appointment. \n\nHere are your details:\nName: ${data.customerName}\nDate: ${data.appointmentDate}\nTime: ${data.appointmentTime}\nReference: ${data.appointmentId}\n\nYou'll receive a confirmation email at ${data.customerEmail} shortly. Is there anything else I can help you with today?`;\n\n// Format for TwiML\nconst twimlMessage = confirmationMessage.replace(/\\n/g, ' ');\n\nreturn {\n  json: {\n    ...data,\n    confirmationMessage: confirmationMessage,\n    twimlMessage: twimlMessage,\n    appointmentBooked: true\n  }\n};"
+      },
+      "id": "64f2f13c-f3ea-4b2d-8050-3426620ede86",
+      "name": "Generate Confirmation",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        0,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n    <Say voice=\"Polly.Joanna\">\n        {{ $json.twimlMessage }}\n    </Say>\n    <Gather input=\"speech\" \n            timeout=\"5\" \n            action=\"{{ $('Webhook - Inbound Call').item.json.webhookUrl }}/final-response\">\n        <Pause length=\"1\"/>\n    </Gather>\n    <Say>Thank you for calling. Goodbye!</Say>\n    <Hangup/>\n</Response>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "b7312178-2eca-4505-91ab-1126d40fc4d8",
+      "name": "Respond with Confirmation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        224,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n    <Say voice=\"Polly.Joanna\">\n        {{ $json.aiResponse }}\n    </Say>\n    <Gather input=\"speech\" \n            timeout=\"5\" \n            speechTimeout=\"auto\" \n            action=\"{{ $('Webhook - Inbound Call').item.json.webhookUrl }}/process-speech\">\n        <Pause length=\"1\"/>\n    </Gather>\n    <Say>I didn't catch that. Could you please repeat?</Say>\n    <Redirect>{{ $('Webhook - Inbound Call').item.json.webhookUrl }}/process-speech</Redirect>\n</Response>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "fc4d41a2-c3f4-4b14-a4d6-f4ca1296dec8",
+      "name": "Continue Conversation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        448
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Inbound Call": {
+      "main": [
+        [
+          {
+            "node": "Parse Call Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Call Data": {
+      "main": [
+        [
+          {
+            "node": "Respond with Greeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Process Speech": {
+      "main": [
+        [
+          {
+            "node": "Extract Speech",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Speech": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Process Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Process Intent": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "If Ready to Book",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Ready to Book": {
+      "main": [
+        [
+          {
+            "node": "Validate Appointment Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Continue Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Appointment Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Respond with Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "12fdf10d-6c83-4ad9-9d8c-ff462423df31",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ba3cb230570993bde7d3f2d55157133449bd69788a82c5a41b97d69af469775c"
+  },
+  "id": "zUgVZkBl5ccqNMZg",
+  "tags": []
+}
